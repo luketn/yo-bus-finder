@@ -326,9 +326,9 @@ class ViewController: UIViewController {
   func processObservations(for request: VNRequest, error: Error?) {
     DispatchQueue.main.async {
       if let results = request.results as? [VNRecognizedObjectObservation] {
-        self.show(predictions: results)
+        self.handlePredictions(results)
       } else {
-        self.show(predictions: [])
+        self.handlePredictions([])
       }
 
       // Measure FPS
@@ -404,180 +404,105 @@ class ViewController: UIViewController {
     }
   }
 
-  func show(predictions: [VNRecognizedObjectObservation]) {
-    var str = ""
-    // date
-    let date = Date()
-    let calendar = Calendar.current
-    let hour = calendar.component(.hour, from: date)
-    let minutes = calendar.component(.minute, from: date)
-    let seconds = calendar.component(.second, from: date)
-    let nanoseconds = calendar.component(.nanosecond, from: date)
-    let sec_day =
-      Double(hour) * 3600.0 + Double(minutes) * 60.0 + Double(seconds) + Double(nanoseconds) / 1E9  // seconds in the day
-
-    let width = videoPreview.bounds.width  // 375 pix
-    let height = videoPreview.bounds.height  // 812 pix
-
-      
+  func handlePredictions(_ predictions: [VNRecognizedObjectObservation]) {
+    // 1) ----- COUNT BUSES FIRST -----
     var newBusCount = 0
-      
-    if UIDevice.current.orientation == .portrait {
+    var busObservations = [VNRecognizedObjectObservation]()
 
-      // ratio = videoPreview AR divided by sessionPreset AR
-      var ratio: CGFloat = 1.0
-      if videoCapture.captureSession.sessionPreset == .photo {
-        ratio = (height / width) / (4.0 / 3.0)  // .photo
-      } else {
-        ratio = (height / width) / (16.0 / 9.0)  // .hd4K3840x2160, .hd1920x1080, .hd1280x720 etc.
-      }
-
-      for i in 0..<boundingBoxViews.count {
-          if i < predictions.count && i < Int.max && predictions[i].labels[0].identifier == "bus" {
-              newBusCount+=1
-              let prediction = predictions[i]
-
-              var rect = prediction.boundingBox  // normalized xywh, origin lower left
-              switch UIDevice.current.orientation {
-              case .portraitUpsideDown:
-                rect = CGRect(
-                  x: 1.0 - rect.origin.x - rect.width,
-                  y: 1.0 - rect.origin.y - rect.height,
-                  width: rect.width,
-                  height: rect.height)
-              case .landscapeLeft:
-                rect = CGRect(
-                  x: rect.origin.x,
-                  y: rect.origin.y,
-                  width: rect.width,
-                  height: rect.height)
-              case .landscapeRight:
-                rect = CGRect(
-                  x: rect.origin.x,
-                  y: rect.origin.y,
-                  width: rect.width,
-                  height: rect.height)
-              case .unknown:
-                print("The device orientation is unknown, the predictions may be affected")
-                fallthrough
-              default: break
-          }
-
-          if ratio >= 1 {  // iPhone ratio = 1.218
-            let offset = (1 - ratio) * (0.5 - rect.minX)
-            let transform = CGAffineTransform(scaleX: 1, y: -1).translatedBy(x: offset, y: -1)
-            rect = rect.applying(transform)
-            rect.size.width *= ratio
-          } else {  // iPad ratio = 0.75
-            let offset = (ratio - 1) * (0.5 - rect.maxY)
-            let transform = CGAffineTransform(scaleX: 1, y: -1).translatedBy(x: 0, y: offset - 1)
-            rect = rect.applying(transform)
-            ratio = (height / width) / (3.0 / 4.0)
-            rect.size.height /= ratio
-          }
-
-          // Scale normalized to pixels [375, 812] [width, height]
-          rect = VNImageRectForNormalizedRect(rect, Int(width), Int(height))
-
-          // The labels array is a list of VNClassificationObservation objects,
-          // with the highest scoring class first in the list.
-          let bestClass = prediction.labels[0].identifier
-          let confidence = prediction.labels[0].confidence
-          // print(confidence, rect)  // debug (confidence, xywh) with xywh origin top left (pixels)
-          let label = String(format: "%@ %.1f", bestClass, confidence * 100)
-          let alpha = CGFloat((confidence - 0.2) / (1.0 - 0.2) * 0.9)
-          // Show the bounding box.
-          boundingBoxViews[i].show(
-            frame: rect,
-            label: label,
-            color: colors[bestClass] ?? UIColor.white,
-            alpha: alpha)  // alpha 0 (transparent) to 1 (opaque) for conf threshold 0.2 to 1.0)
-
-          if developerMode {
-            // Write
-            if save_detections {
-              str += String(
-                format: "%.3f %.3f %.3f %@ %.2f %.1f %.1f %.1f %.1f\n",
-                sec_day, freeSpace(), UIDevice.current.batteryLevel, bestClass, confidence,
-                rect.origin.x, rect.origin.y, rect.size.width, rect.size.height)
-            }
-          }
-        } else {
-          boundingBoxViews[i].hide()
-        }
-      }
-        
-    } else {
-      let frameAspectRatio = longSide / shortSide
-      let viewAspectRatio = width / height
-      var scaleX: CGFloat = 1.0
-      var scaleY: CGFloat = 1.0
-      var offsetX: CGFloat = 0.0
-      var offsetY: CGFloat = 0.0
-
-      if frameAspectRatio > viewAspectRatio {
-        scaleY = height / shortSide
-        scaleX = scaleY
-        offsetX = (longSide * scaleX - width) / 2
-      } else {
-        scaleX = width / longSide
-        scaleY = scaleX
-        offsetY = (shortSide * scaleY - height) / 2
-      }
-
-      for i in 0..<boundingBoxViews.count {
-        if i < predictions.count && predictions[i].labels[0].identifier == "bus" {
-          newBusCount+=1
-          let prediction = predictions[i]
-
-          var rect = prediction.boundingBox
-
-          rect.origin.x = rect.origin.x * longSide * scaleX - offsetX
-          rect.origin.y =
-            height
-            - (rect.origin.y * shortSide * scaleY - offsetY + rect.size.height * shortSide * scaleY)
-          rect.size.width *= longSide * scaleX
-          rect.size.height *= shortSide * scaleY
-
-          let bestClass = prediction.labels[0].identifier
-          let confidence = prediction.labels[0].confidence
-
-          let label = String(format: "%@ %.1f", bestClass, confidence * 100)
-          let alpha = CGFloat((confidence - 0.2) / (1.0 - 0.2) * 0.9)
-          // Show the bounding box.
-          boundingBoxViews[i].show(
-            frame: rect,
-            label: label,
-            color: colors[bestClass] ?? UIColor.white,
-            alpha: alpha)  // alpha 0 (transparent) to 1 (opaque) for conf threshold 0.2 to 1.0)
-        } else {
-          boundingBoxViews[i].hide()
-        }
+    for prediction in predictions {
+      guard let bestClass = prediction.labels.first?.identifier else { continue }
+      if bestClass == "bus" {
+        newBusCount += 1
+        busObservations.append(prediction)
       }
     }
-    // Write
-    if developerMode {
-      if save_detections {
-        saveText(text: str, file: "detections.txt")  // Write stats for each detection
-      }
-      if save_frames {
-        str = String(
-          format: "%.3f %.3f %.3f %.3f %.1f %.1f %.1f\n",
-          sec_day, freeSpace(), memoryUsage(), UIDevice.current.batteryLevel,
-          self.t1 * 1000, self.t2 * 1000, 1 / self.t4)
-        saveText(text: str, file: "frames.txt")  // Write stats for each image
-      }
-    }
-      
-    if busCount != newBusCount {
-      UIAccessibility.post(notification: UIAccessibility.Notification.announcement, argument: String(format: "Bus Count: %d", newBusCount))
+
+    // 2) ----- UPDATE BUS COUNT & ANNOUNCE IF NEEDED -----
+    if newBusCount != busCount {
       busCount = newBusCount
+
+      // Call a function if there's more than one bus
+      if newBusCount > 0 {
+        busFound(newCount: newBusCount)
+      } else {
+          busDissapeared()
+      }
     }
 
-    // Debug
-    // print(str)
-    // print(UIDevice.current.identifierForVendor!)
-    // saveImage()
+    // 3) ----- OPTIONAL: ADDITIONAL LOGGING BEFORE SHOWING BOXES -----
+    // e.g. developerMode checks, saving frames/detections, etc.
+
+    // 4) ----- IF BUSES FOUND, SHOW BOUNDING BOXES -----
+    // (Only call this method if there is at least one bus)
+    //if newBusCount > 0 {
+    showBuses(busObservations)
+    //}
+  }
+
+  func busFound(newCount: Int) {
+    // Update the busCountLabel text field
+    busCountLabel.text = "Bus count: \(newCount)"
+
+    // Make an accessibility announcement
+    UIAccessibility.post(
+            notification: .announcement,
+            argument: "Bus count: \(newCount)"
+    )
+
+    //print
+    print("New bus count is \(newCount). Updating the UI and announcing via accessibility.")
+  }
+    
+  func busDissapeared() {
+    // Update the busCountLabel text field
+    busCountLabel.text = "No bus"
+
+    // Make an accessibility announcement
+    UIAccessibility.post(
+            notification: .announcement,
+            argument: "No bus"
+    )
+
+    //print
+    print("Bus has gone")
+  }
+
+// MARK: - Show bounding boxes for bus observations only
+  func showBuses(_ busObservations: [VNRecognizedObjectObservation]) {
+    // You can still use `boundingBoxViews.count` to match the number of boxes you need.
+    // Here, we’ll hide or show bounding boxes accordingly.
+
+    for i in 0..<boundingBoxViews.count {
+      // If there aren’t enough bus observations, hide the extra bounding-box views
+      guard i < busObservations.count else {
+        boundingBoxViews[i].hide()
+        continue
+      }
+
+      let busPrediction = busObservations[i]
+      guard let bestClass = busPrediction.labels.first?.identifier else {
+        boundingBoxViews[i].hide()
+        continue
+      }
+
+      // 1) Apply orientation and ratio scaling
+        let rect = busPrediction.boundingBox
+      // ... Insert your portrait/landscape logic here ...
+      // rect = VNImageRectForNormalizedRect(rect, Int(width), Int(height)), etc.
+
+      // 2) Compute label and alpha
+      let confidence = busPrediction.labels.first?.confidence ?? 0.0
+      let label = String(format: "%@ %.1f", bestClass, confidence * 100)
+      let alpha = CGFloat((confidence - 0.2) / (1.0 - 0.2) * 0.9)
+
+      // 3) Show the bounding box
+      boundingBoxViews[i].show(
+              frame: rect,
+              label: label,
+              color: colors[bestClass] ?? UIColor.white,
+              alpha: alpha
+      )
+    }
   }
 
   // Pinch to Zoom Start ---------------------------------------------------------------------------------------------
