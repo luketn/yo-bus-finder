@@ -474,36 +474,37 @@ class ViewController: UIViewController {
 
   // MARK: - Show bounding boxes for bus observations only
   func showBuses(_ busObservations: [VNRecognizedObjectObservation]) {
-    // You can still use `boundingBoxViews.count` to match the number of boxes you need.
-    // Here, we'll hide or show bounding boxes accordingly.
-
-    // We need to use two bounding box views per bus: one for the bus and one for OCR region
-    let maxBusesWithOCR = boundingBoxViews.count / 2
-    
-    // First, hide all bounding boxes before showing only needed ones
+    // Hide all bounding boxes before showing only needed ones
     for i in 0..<boundingBoxViews.count {
       boundingBoxViews[i].hide()
     }
 
+    // Calculate how many bounding boxes we can use per bus
+    // We need 5 boxes per bus: 1 for the bus + 4 for OCR regions
+    let boxesPerBus = 5
+    let maxBuses = boundingBoxViews.count / boxesPerBus
+    
     // Show buses and their OCR regions
-    for i in 0..<min(busObservations.count, maxBusesWithOCR) {
+    for i in 0..<min(busObservations.count, maxBuses) {
       let busPrediction = busObservations[i]
       guard let bestClass = busPrediction.labels.first?.identifier else {
         continue
       }
 
-      // 1) Get the bounding box from the prediction
+      // Get the base index for this bus's boxes
+      let baseIndex = i * boxesPerBus
+      
+      // Get the main bus bounding box
       let rect = busPrediction.boundingBox
       
-      // 2) Compute label and alpha
+      // Compute label and alpha
       let confidence = busPrediction.labels.first?.confidence ?? 0.0
       let label = String(format: "%@ %.1f", bestClass, confidence * 100)
       let alpha = CGFloat((confidence - 0.2) / (1.0 - 0.2) * 0.9)
 
-      // 3) Show the main bus bounding box
-      let busBoxIndex = i * 2
-      if busBoxIndex < boundingBoxViews.count {
-        boundingBoxViews[busBoxIndex].show(
+      // 1) Show the main bus bounding box
+      if baseIndex < boundingBoxViews.count {
+        boundingBoxViews[baseIndex].show(
           frame: rect,
           label: label,
           color: colors[bestClass] ?? UIColor.white,
@@ -511,24 +512,49 @@ class ViewController: UIViewController {
         )
       }
       
-      // 4) Show the OCR region (top third of the bus where number is likely to be)
-      let ocrBoxIndex = busBoxIndex + 1
-      if ocrBoxIndex < boundingBoxViews.count {
-        // Create a smaller rectangle for the OCR region at the top third of the bus
-        let ocrRect = CGRect(
+      // 2) Show all OCR regions with different colors for visual debugging
+      
+      // Create rectangles for the various OCR regions
+      let regions: [(CGRect, String, UIColor)] = [
+        // Top third (common for city buses with route numbers at the top)
+        (CGRect(
           x: rect.origin.x,
           y: rect.origin.y + (rect.height * 2/3),
           width: rect.width,
           height: rect.height/3
-        )
+        ), "Top", UIColor.yellow),
         
-        // Show the OCR region with a distinctive color and label
-        boundingBoxViews[ocrBoxIndex].show(
-          frame: ocrRect,
-          label: "OCR",
-          color: UIColor.yellow,
-          alpha: 0.7
-        )
+        // Top half (for when numbers are larger or centered)
+        (CGRect(
+          x: rect.origin.x,
+          y: rect.origin.y + (rect.height * 1/2),
+          width: rect.width,
+          height: rect.height/2
+        ), "Middle", UIColor.green),
+        
+        // Front section (for numbers on the front of the bus)
+        (CGRect(
+          x: rect.origin.x,
+          y: rect.origin.y,
+          width: rect.width * 0.33,
+          height: rect.height
+        ), "Front", UIColor.cyan),
+        
+        // Full bus (just to visualize what regions we're checking)
+        (rect, "Full", UIColor(red: 1.0, green: 0.5, blue: 0.0, alpha: 0.3))
+      ]
+      
+      // Display each region with its own color
+      for (index, (regionRect, regionName, regionColor)) in regions.enumerated() {
+        let boxIndex = baseIndex + index + 1
+        if boxIndex < boundingBoxViews.count {
+          boundingBoxViews[boxIndex].show(
+            frame: regionRect,
+            label: regionName,
+            color: regionColor,
+            alpha: 0.4  // Make them semi-transparent so we can see through them
+          )
+        }
       }
     }
   }
@@ -576,84 +602,113 @@ class ViewController: UIViewController {
   
   /// Perform OCR on detected bus regions to extract bus numbers
   func performOCROnBuses(_ busObservations: [VNRecognizedObjectObservation], pixelBuffer: CVPixelBuffer) {
-    // Convert the pixel buffer to a CIImage
-    let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-    
-    // For each bus observation, extract the region and perform OCR
+    // For each bus observation, create multiple OCR requests to increase chances of detection
     for observation in busObservations {
       // Get the bounding box
       let boundingBox = observation.boundingBox
       
-      // Convert normalized coordinates to pixel coordinates
-      let width = CGFloat(CVPixelBufferGetWidth(pixelBuffer))
-      let height = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
+      // Create an array to hold the regions of interest
+      var regionsOfInterest = [CGRect]()
       
-      // Calculate region of interest in the image
-      // Note: Vision's coordinate system has (0,0) at the bottom left
-      let imageRect = CGRect(x: boundingBox.origin.x * width,
-                           y: boundingBox.origin.y * height,
-                           width: boundingBox.width * width,
-                           height: boundingBox.height * height)
+      // Add the entire bus area as a ROI (some bus numbers cover the whole side)
+      regionsOfInterest.append(boundingBox)
       
-      // Extract the region of interest
-      // We'll focus on the top third of the bus where the number is typically located
-      let topThirdRect = CGRect(x: imageRect.origin.x,
-                               y: imageRect.origin.y + (imageRect.height * 2/3),
-                               width: imageRect.width,
-                               height: imageRect.height/3)
+      // Add top third (common for city buses with route numbers at the top)
+      let topThirdRect = CGRect(
+        x: boundingBox.origin.x,
+        y: boundingBox.origin.y + (boundingBox.height * 2/3),
+        width: boundingBox.width,
+        height: boundingBox.height/3
+      )
+      regionsOfInterest.append(topThirdRect)
       
-      // Create a request handler with the cropped image
-      // Create a Vision text recognition request
-      let textRecognitionRequest = VNRecognizeTextRequest { [weak self] (request, error) in
-        guard let self = self,
-              let results = request.results as? [VNRecognizedTextObservation],
-              !results.isEmpty else {
-          return
+      // Add top half (for when numbers are larger or centered)
+      let topHalfRect = CGRect(
+        x: boundingBox.origin.x,
+        y: boundingBox.origin.y + (boundingBox.height * 1/2),
+        width: boundingBox.width,
+        height: boundingBox.height/2
+      )
+      regionsOfInterest.append(topHalfRect)
+      
+      // Add front section (for numbers on the front of the bus)
+      let frontRect = CGRect(
+        x: boundingBox.origin.x,
+        y: boundingBox.origin.y,
+        width: boundingBox.width * 0.33,
+        height: boundingBox.height
+      )
+      regionsOfInterest.append(frontRect)
+      
+      // Process each region of interest
+      for (index, roi) in regionsOfInterest.enumerated() {
+        // Create a Vision text recognition request
+        let textRecognitionRequest = VNRecognizeTextRequest { [weak self] (request, error) in
+          guard let self = self,
+                let results = request.results as? [VNRecognizedTextObservation],
+                !results.isEmpty else {
+            return
+          }
+          
+          // Process text recognition results with region info for debugging
+          self.processOCRResults(results, regionIndex: index)
         }
         
-        // Process text recognition results
-        self.processOCRResults(results)
+        // Configure the text recognition request with improved settings
+        textRecognitionRequest.recognitionLevel = .accurate
+        textRecognitionRequest.usesLanguageCorrection = false
+        textRecognitionRequest.regionOfInterest = roi
+        textRecognitionRequest.recognitionLanguages = ["en-US"]
+        
+        // Request multiple candidate recognitions to improve matching
+        textRecognitionRequest.minimumTextHeight = 0.05 // Allow for smaller text 
+        textRecognitionRequest.customWords = ["BUS", "ROUTE", "EXPRESS", "LOCAL"]
+        textRecognitionRequest.revision = 2 // Use latest revision for better results
+
+        // Process the request
+        let requestHandler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
+        try? requestHandler.perform([textRecognitionRequest])
       }
-      
-      // Configure the text recognition request
-      textRecognitionRequest.recognitionLevel = .accurate
-      textRecognitionRequest.usesLanguageCorrection = false
-      textRecognitionRequest.regionOfInterest = boundingBox // Use normalized coordinates
-      
-      // Set recognition language to English for bus numbers
-      textRecognitionRequest.recognitionLanguages = ["en-US"]
-      
-      // Process the request
-      let requestHandler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
-      try? requestHandler.perform([textRecognitionRequest])
     }
   }
   
   /// Process OCR results to extract and display bus numbers
-  func processOCRResults(_ results: [VNRecognizedTextObservation]) {
+  func processOCRResults(_ results: [VNRecognizedTextObservation], regionIndex: Int = 0) {
     // Extract text from observations
     var detectedTexts = [String]()
     
+    // Keep track of candidates for potential bus numbers
     for observation in results {
-      // Get the top candidate for each text observation
-      guard let candidate = observation.topCandidates(1).first else { continue }
+      // Get multiple candidates for each text observation to increase chances of finding valid numbers
+      let candidates = observation.topCandidates(3)
       
-      // Extract the recognized text
-      let recognizedText = candidate.string
-      
-      // Filter for potential bus numbers (typically numeric, may include letters)
-      if containsValidBusNumber(recognizedText) {
-        detectedTexts.append(recognizedText)
+      for candidate in candidates {
+        // Extract the recognized text
+        let recognizedText = candidate.string
+        
+        // Filter for potential bus numbers (typically numeric, may include letters)
+        if containsValidBusNumber(recognizedText) {
+          // Use confidence threshold to avoid low-confidence detections
+          if candidate.confidence > 0.3 {
+            detectedTexts.append(recognizedText)
+          }
+        }
       }
     }
     
-    // Update UI with detected bus numbers
+    // If we found bus numbers, update the UI
     if !detectedTexts.isEmpty {
+      // Remove duplicates by converting to a set
+      let uniqueDetectedTexts = Array(Set(detectedTexts))
+      
       DispatchQueue.main.async { [weak self] in
         guard let self = self else { return }
         
         // Join all detected numbers with commas
-        let busNumbersText = detectedTexts.joined(separator: ", ")
+        let busNumbersText = uniqueDetectedTexts.joined(separator: ", ")
+        
+        // Get region name for debugging
+        let regionName = self.getRegionName(regionIndex)
         
         // Update bus count label to include detected numbers
         self.busCountLabel.text = "Bus: \(busNumbersText)"
@@ -664,24 +719,78 @@ class ViewController: UIViewController {
           argument: "Bus number \(busNumbersText) detected"
         )
         
-        print("Detected bus numbers: \(busNumbersText)")
+        print("Detected bus numbers: \(busNumbersText) in region: \(regionName)")
       }
+    }
+  }
+  
+  /// Get a descriptive name for the region of interest
+  private func getRegionName(_ index: Int) -> String {
+    switch index {
+    case 0: return "Full bus"
+    case 1: return "Top third"
+    case 2: return "Top half"
+    case 3: return "Front section"
+    default: return "Unknown region"
     }
   }
   
   /// Check if the recognized text is likely to be a valid bus number
   func containsValidBusNumber(_ text: String) -> Bool {
     // Remove whitespace and check if empty
-    let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
     guard !trimmedText.isEmpty else { return false }
     
-    // Bus numbers are typically 1-3 digits, sometimes with a letter
-    // This regex matches common bus number patterns
-    let busNumberPattern = "^[A-Z]?\\d{1,3}[A-Z]?$"
+    // Too long to be a bus number
+    if trimmedText.count > 8 {
+      return false
+    }
     
-    if let regex = try? NSRegularExpression(pattern: busNumberPattern, options: []) {
-      let range = NSRange(location: 0, length: trimmedText.utf16.count)
-      return regex.firstMatch(in: trimmedText, options: [], range: range) != nil
+    // First try various regex patterns for different bus number formats
+    let busNumberPatterns = [
+      // Basic pattern: 1-3 digits, optional letter prefix/suffix (e.g., "123", "A42", "42B")
+      "^[A-Z]?\\d{1,3}[A-Z]?$",
+      
+      // Pattern with dash: letter + digits + optional dash + more digits (e.g., "M42", "X1-2")
+      "^[A-Z]\\d{1,2}(-\\d{1,2})?$",
+      
+      // Pattern with route prefix: "RT" or "BUS" followed by digits (e.g., "RT123", "BUS42")
+      "^(RT|BUS)[\\s-]?\\d{1,3}$",
+      
+      // Express bus pattern: "X" or "EXP" followed by digits (e.g., "X42", "EXP123")
+      "^(X|EXP)[\\s-]?\\d{1,3}$",
+      
+      // Common city patterns with directions (e.g., "42E", "N7")
+      "^\\d{1,3}[NSEW]$",
+      "^[NSEW]\\d{1,3}$"
+    ]
+    
+    // Try each pattern
+    for pattern in busNumberPatterns {
+      if let regex = try? NSRegularExpression(pattern: pattern, options: []) {
+        let range = NSRange(location: 0, length: trimmedText.utf16.count)
+        if regex.firstMatch(in: trimmedText, options: [], range: range) != nil {
+          return true
+        }
+      }
+    }
+    
+    // Check if it's a numeric-only bus number (most common case)
+    // This covers cases where we just have a number like "42" without any letters
+    if let _ = Int(trimmedText), trimmedText.count <= 3 {
+      return true
+    }
+    
+    // Special handling for mixed alphanumeric bus routes
+    // This is a more relaxed check for cases we might have missed
+    // Only accept if it's short, contains at least one digit, and doesn't have many non-alphanumeric chars
+    if trimmedText.count <= 5 {
+      let hasDigit = trimmedText.contains { $0.isNumber }
+      let nonAlphaNumericCount = trimmedText.filter { !$0.isLetter && !$0.isNumber }.count
+      
+      if hasDigit && nonAlphaNumericCount <= 1 {
+        return true
+      }
     }
     
     return false
