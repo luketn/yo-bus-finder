@@ -432,10 +432,15 @@ class ViewController: UIViewController {
     // 3) ----- OPTIONAL: ADDITIONAL LOGGING BEFORE SHOWING BOXES -----
     // e.g. developerMode checks, saving frames/detections, etc.
 
-    // 4) ----- IF BUSES FOUND, SHOW BOUNDING BOXES -----
+    // 4) ----- IF BUSES FOUND, SHOW BOUNDING BOXES AND PERFORM OCR -----
     // (Only call this method if there is at least one bus)
     //if newBusCount > 0 {
     showBuses(busObservations)
+    
+    // Perform OCR on bus regions
+    if newBusCount > 0 && currentBuffer != nil {
+        performOCROnBuses(busObservations, pixelBuffer: currentBuffer!)
+    }
     //}
   }
 
@@ -452,7 +457,7 @@ class ViewController: UIViewController {
     //print
     print("New bus count is \(newCount). Updating the UI and announcing via accessibility.")
   }
-    
+
   func busDissapeared() {
     // Update the busCountLabel text field
     busCountLabel.text = "No bus"
@@ -467,41 +472,64 @@ class ViewController: UIViewController {
     print("Bus has gone")
   }
 
-// MARK: - Show bounding boxes for bus observations only
+  // MARK: - Show bounding boxes for bus observations only
   func showBuses(_ busObservations: [VNRecognizedObjectObservation]) {
     // You can still use `boundingBoxViews.count` to match the number of boxes you need.
-    // Here, we’ll hide or show bounding boxes accordingly.
+    // Here, we'll hide or show bounding boxes accordingly.
 
+    // We need to use two bounding box views per bus: one for the bus and one for OCR region
+    let maxBusesWithOCR = boundingBoxViews.count / 2
+    
+    // First, hide all bounding boxes before showing only needed ones
     for i in 0..<boundingBoxViews.count {
-      // If there aren’t enough bus observations, hide the extra bounding-box views
-      guard i < busObservations.count else {
-        boundingBoxViews[i].hide()
-        continue
-      }
+      boundingBoxViews[i].hide()
+    }
 
+    // Show buses and their OCR regions
+    for i in 0..<min(busObservations.count, maxBusesWithOCR) {
       let busPrediction = busObservations[i]
       guard let bestClass = busPrediction.labels.first?.identifier else {
-        boundingBoxViews[i].hide()
         continue
       }
 
-      // 1) Apply orientation and ratio scaling
-        let rect = busPrediction.boundingBox
-      // ... Insert your portrait/landscape logic here ...
-      // rect = VNImageRectForNormalizedRect(rect, Int(width), Int(height)), etc.
-
+      // 1) Get the bounding box from the prediction
+      let rect = busPrediction.boundingBox
+      
       // 2) Compute label and alpha
       let confidence = busPrediction.labels.first?.confidence ?? 0.0
       let label = String(format: "%@ %.1f", bestClass, confidence * 100)
       let alpha = CGFloat((confidence - 0.2) / (1.0 - 0.2) * 0.9)
 
-      // 3) Show the bounding box
-      boundingBoxViews[i].show(
-              frame: rect,
-              label: label,
-              color: colors[bestClass] ?? UIColor.white,
-              alpha: alpha
-      )
+      // 3) Show the main bus bounding box
+      let busBoxIndex = i * 2
+      if busBoxIndex < boundingBoxViews.count {
+        boundingBoxViews[busBoxIndex].show(
+          frame: rect,
+          label: label,
+          color: colors[bestClass] ?? UIColor.white,
+          alpha: alpha
+        )
+      }
+      
+      // 4) Show the OCR region (top third of the bus where number is likely to be)
+      let ocrBoxIndex = busBoxIndex + 1
+      if ocrBoxIndex < boundingBoxViews.count {
+        // Create a smaller rectangle for the OCR region at the top third of the bus
+        let ocrRect = CGRect(
+          x: rect.origin.x,
+          y: rect.origin.y + (rect.height * 2/3),
+          width: rect.width,
+          height: rect.height/3
+        )
+        
+        // Show the OCR region with a distinctive color and label
+        boundingBoxViews[ocrBoxIndex].show(
+          frame: ocrRect,
+          label: "OCR",
+          color: UIColor.yellow,
+          alpha: 0.7
+        )
+      }
     }
   }
 
@@ -543,6 +571,121 @@ class ViewController: UIViewController {
     default: break
     }
   }  // Pinch to Zoom End --------------------------------------------------------------------------------------------
+  
+  // MARK: - OCR Processing
+  
+  /// Perform OCR on detected bus regions to extract bus numbers
+  func performOCROnBuses(_ busObservations: [VNRecognizedObjectObservation], pixelBuffer: CVPixelBuffer) {
+    // Convert the pixel buffer to a CIImage
+    let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+    
+    // For each bus observation, extract the region and perform OCR
+    for observation in busObservations {
+      // Get the bounding box
+      let boundingBox = observation.boundingBox
+      
+      // Convert normalized coordinates to pixel coordinates
+      let width = CGFloat(CVPixelBufferGetWidth(pixelBuffer))
+      let height = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
+      
+      // Calculate region of interest in the image
+      // Note: Vision's coordinate system has (0,0) at the bottom left
+      let imageRect = CGRect(x: boundingBox.origin.x * width,
+                           y: boundingBox.origin.y * height,
+                           width: boundingBox.width * width,
+                           height: boundingBox.height * height)
+      
+      // Extract the region of interest
+      // We'll focus on the top third of the bus where the number is typically located
+      let topThirdRect = CGRect(x: imageRect.origin.x,
+                               y: imageRect.origin.y + (imageRect.height * 2/3),
+                               width: imageRect.width,
+                               height: imageRect.height/3)
+      
+      // Create a request handler with the cropped image
+      // Create a Vision text recognition request
+      let textRecognitionRequest = VNRecognizeTextRequest { [weak self] (request, error) in
+        guard let self = self,
+              let results = request.results as? [VNRecognizedTextObservation],
+              !results.isEmpty else {
+          return
+        }
+        
+        // Process text recognition results
+        self.processOCRResults(results)
+      }
+      
+      // Configure the text recognition request
+      textRecognitionRequest.recognitionLevel = .accurate
+      textRecognitionRequest.usesLanguageCorrection = false
+      textRecognitionRequest.regionOfInterest = boundingBox // Use normalized coordinates
+      
+      // Set recognition language to English for bus numbers
+      textRecognitionRequest.recognitionLanguages = ["en-US"]
+      
+      // Process the request
+      let requestHandler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, options: [:])
+      try? requestHandler.perform([textRecognitionRequest])
+    }
+  }
+  
+  /// Process OCR results to extract and display bus numbers
+  func processOCRResults(_ results: [VNRecognizedTextObservation]) {
+    // Extract text from observations
+    var detectedTexts = [String]()
+    
+    for observation in results {
+      // Get the top candidate for each text observation
+      guard let candidate = observation.topCandidates(1).first else { continue }
+      
+      // Extract the recognized text
+      let recognizedText = candidate.string
+      
+      // Filter for potential bus numbers (typically numeric, may include letters)
+      if containsValidBusNumber(recognizedText) {
+        detectedTexts.append(recognizedText)
+      }
+    }
+    
+    // Update UI with detected bus numbers
+    if !detectedTexts.isEmpty {
+      DispatchQueue.main.async { [weak self] in
+        guard let self = self else { return }
+        
+        // Join all detected numbers with commas
+        let busNumbersText = detectedTexts.joined(separator: ", ")
+        
+        // Update bus count label to include detected numbers
+        self.busCountLabel.text = "Bus: \(busNumbersText)"
+        
+        // Make accessibility announcement
+        UIAccessibility.post(
+          notification: .announcement,
+          argument: "Bus number \(busNumbersText) detected"
+        )
+        
+        print("Detected bus numbers: \(busNumbersText)")
+      }
+    }
+  }
+  
+  /// Check if the recognized text is likely to be a valid bus number
+  func containsValidBusNumber(_ text: String) -> Bool {
+    // Remove whitespace and check if empty
+    let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedText.isEmpty else { return false }
+    
+    // Bus numbers are typically 1-3 digits, sometimes with a letter
+    // This regex matches common bus number patterns
+    let busNumberPattern = "^[A-Z]?\\d{1,3}[A-Z]?$"
+    
+    if let regex = try? NSRegularExpression(pattern: busNumberPattern, options: []) {
+      let range = NSRange(location: 0, length: trimmedText.utf16.count)
+      return regex.firstMatch(in: trimmedText, options: [], range: range) != nil
+    }
+    
+    return false
+  }
 }  // ViewController class End
 
 extension ViewController: VideoCaptureDelegate {
