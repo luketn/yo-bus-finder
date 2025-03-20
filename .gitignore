@@ -63,3 +63,6 @@ fastlane/test_output
 
 /.idea
 /YOLO/Models/*.mlpackage*
+
+.DS_Store
+

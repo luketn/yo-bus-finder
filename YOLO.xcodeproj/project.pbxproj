@@ -21,6 +21,8 @@
 		73E3C8022CE3AF1A00E2D85C /* yolo11n.mlpackage in Sources */ = {isa = PBXBuildFile; fileRef = 73E3C7FB2CE3AF1A00E2D85C /* yolo11n.mlpackage */; };
 		88408FC42D0D4CDF00E2242A /* logo.jpg in Resources */ = {isa = PBXBuildFile; fileRef = 88408FC32D0D4CDF00E2242A /* logo.jpg */; };
 		887A990B2D165BD8000A5692 /* VideoCapture.swift in Sources */ = {isa = PBXBuildFile; fileRef = BEEE4D5ABDEA53501BE897BA /* VideoCapture.swift */; };
+		888E71592D61884100CE9005 /* MainUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 888E71582D61884100CE9005 /* MainUI.swift */; };
+		888E715C2D62CE6E00CE9005 /* Clarity in Frameworks */ = {isa = PBXBuildFile; productRef = 888E715B2D62CE6E00CE9005 /* Clarity */; };
 		8EDAA33950796844333D60A7 /* BoundingBoxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8EDAA633C1F2B50286D16008 /* BoundingBoxView.swift */; };
 /* End PBXBuildFile section */
 
@@ -41,6 +43,7 @@
 		73E3C7FD2CE3AF1A00E2D85C /* yolo11x.mlpackage */ = {isa = PBXFileReference; lastKnownFileType = folder.mlpackage; path = yolo11x.mlpackage; sourceTree = "<group>"; };
 		7BCB411721C3096100BFC4D0 /* YOLO.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = YOLO.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		88408FC32D0D4CDF00E2242A /* logo.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = logo.jpg; sourceTree = "<group>"; };
+		888E71582D61884100CE9005 /* MainUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MainUI.swift; sourceTree = "<group>"; };
 		8EDAA633C1F2B50286D16008 /* BoundingBoxView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = BoundingBoxView.swift; sourceTree = "<group>"; };
 		8EDAAA4507D2D23D7FAB827F /* README.md */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
 		BEEE4D5ABDEA53501BE897BA /* VideoCapture.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = VideoCapture.swift; sourceTree = "<group>"; };
@@ -51,6 +54,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				888E715C2D62CE6E00CE9005 /* Clarity in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -80,6 +84,7 @@
 				632892DF22EB3DB100A12D9C /* Info.plist */,
 				636EFCB821E62E3900DE43BC /* Assets.xcassets */,
 				88408FC32D0D4CDF00E2242A /* logo.jpg */,
+				888E71582D61884100CE9005 /* MainUI.swift */,
 			);
 			path = YOLO;
 			sourceTree = "<group>";
@@ -160,6 +165,9 @@
 				Base,
 			);
 			mainGroup = 7BCB410E21C3096100BFC4D0;
+			packageReferences = (
+				888E715A2D62CE6E00CE9005 /* XCRemoteSwiftPackageReference "clarity-apps" */,
+			);
 			productRefGroup = 7BCB411821C3096100BFC4D0 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
@@ -219,6 +227,7 @@
 				887A990B2D165BD8000A5692 /* VideoCapture.swift in Sources */,
 				73E3C8022CE3AF1A00E2D85C /* yolo11n.mlpackage in Sources */,
 				636EFCAA21E62DD300DE43BC /* ViewController.swift in Sources */,
+				888E71592D61884100CE9005 /* MainUI.swift in Sources */,
 				8EDAA33950796844333D60A7 /* BoundingBoxView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -426,6 +435,25 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		888E715A2D62CE6E00CE9005 /* XCRemoteSwiftPackageReference "clarity-apps" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/microsoft/clarity-apps";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 3.0.5;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		888E715B2D62CE6E00CE9005 /* Clarity */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 888E715A2D62CE6E00CE9005 /* XCRemoteSwiftPackageReference "clarity-apps" */;
+			productName = Clarity;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 7BCB410F21C3096100BFC4D0 /* Project object */;
 }

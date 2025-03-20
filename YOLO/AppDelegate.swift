@@ -1,4 +1,5 @@
 import UIKit
+import Clarity
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -29,7 +30,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     // Ensure UserDefaults changes are immediately saved.
     UserDefaults.standard.synchronize()
-
+      
+      
+    // Note: Set ".verbose" value for "logLevel" parameter while testing to debug initialization issues.
+    let clarityConfig = ClarityConfig(projectId: "qb0lbdho2i")
+    ClaritySDK.initialize(config: clarityConfig)
     return true
   }
 }
